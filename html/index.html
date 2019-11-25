@@ -1,0 +1,587 @@
+<!doctype html>
+<html>
+<head><title>Nagios Config</title>
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+<link rel="shortcut icon" href="images/favicon.ico">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="https://code.jquery.com/jquery-3.2.1.min.js" integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4=" crossorigin="anonymous"></script>
+<script src="js/nagios_object.js"></script>
+<script src="js/variables.js"></script>
+<script language="javascript">
+var current_object;
+string_class = {
+    'Host':         NagiosHost,
+    'Hostgroup':    NagiosHostgroup,
+    'Service':      NagiosService,
+    'Servicegroup': NagiosServicegroup,
+    'Contact':      NagiosContact,
+    'Contactgroup': NagiosContactgroup,
+    'Command':      NagiosCommand,
+};
+
+/*******************************************************************************
+Function Name: load_object
+Description:   Gets or executes functions on the server side. Prepares a JSON to 
+               send to the server with the following information:
+                 * model: string model needed by the query (optional)
+                 * function: string with the function name to be executed on 
+                    the server ("list", "show", "check", "reload")
+                 * query: hash filter information for the server. See pynag 
+                    filter for specs
+Input:  
+    * model: string model needed by the query (optional)
+    * func: string with the function name to be executed on 
+        the server ("list", "show", "check", "reload")
+    * query: hash filter information for the server. See pynag 
+        filter for specs
+    * callback: callback function to process the return from the 
+        server. See callback functions for expected returns.
+
+Output: Nothing
+*******************************************************************************/
+function load_object(model, func, query, callback) {
+    $.ajax({ type: "POST",
+        url: "/nagios-config-q/",
+        data: JSON.stringify({ model: model, function: func, query}),
+        contentType: 'application/json',
+        success: callback,
+        dataType: 'json'
+    });
+}
+
+/*
+    Function: append_list_row
+    Receives:
+        list - DOM object that will host the list
+        info - a hash with the following structure:
+            - label: text that will be presented to the user
+            - data: array with information to put into data parameter of DOM
+                - each element in the data is an array of the type [key, value]
+        click_function - Function to execute when clicking on object
+*/
+function append_list_row(list, info, click_function) {
+    var col = $("<div>").addClass("col")
+            .addClass("border")
+            .html(info.label)
+            .click(click_function);
+    info.data.forEach(function(item) {
+        col.data(item[0], item[1]);
+    });
+    list.append($("<div>").addClass("row").html(col));
+}
+
+/*******************************************************************************
+Function Name: collect_object_list
+Description:   This function is called as a callback to populate the object
+               array with all elements from the server
+Input: 
+    * Hash with the following info:
+        - function: string with the function used in the request
+        - message: Output message from theserver
+        - query: hash containing the query from the request
+        - status: result from the execution on the server (ok/error)
+        - data: array of hashes. Each hash must have the following attributes:
+            - id cannot be null
+            - model cannot be null
+            - name
+            - shortname
+            - register
+Output:
+    Array of objects created
+*******************************************************************************/
+function collect_object_list(d) {
+    var data = d.data;
+    var data_list = []
+    if(!Array.isArray(d.data) || d.data.length < 1)
+        return data_list;
+    var model = d.data[0].model;
+    objects[model] = {};
+    data.forEach(function(item) {
+        if(!("model" in item) && !("id" in item)) {
+            console.log("Received invalid item" + item);
+            return;
+        }
+        if(!(item.model in string_class)) {
+            console.log("Invalid model " + item.model);
+            return;
+        }
+        var o = new string_class[item.model](item);
+        objects[item.model][item.id] = o;
+        data_list.push(o)
+    });
+    return data_list;
+}
+
+
+/*******************************************************************************
+Function Name: show_object_list
+Description:   This function is called as a callback to populate the object
+               array with all elements from the server and fill the 
+               .object_list in the page.
+Input: 
+    * Hash with the following info:
+        - function: string with the function used in the request
+        - message: Output message from theserver
+        - query: hash containing the query from the request
+        - status: result from the execution on the server (ok/error)
+        - data: array of hashes. Each hash must have the following attributes:
+            - id: string cannot be null
+            - model: string cannot be null
+            - name: string
+            - shortname: string
+            - register: string
+Output:
+    No output
+*******************************************************************************/
+function show_object_list(d) {
+    var data = collect_object_list(d);
+    var model;
+    reset_object_view();
+    if(data.length < 1)
+        return;
+
+    model = data[0].model;
+    data.sort(sort_object).forEach(function(item, index) {
+        append_list_row($(".object_list"), item.info(), click_list_row);
+    })
+    append_breadcrumb($(".breadcrumb"), model, "list", {model: model});
+}
+
+/*******************************************************************************
+Function Name: show_object_list
+Description:   This function is called as a callback to populate the 
+               .object_override, .object_inherited and .object_effective HTML
+               sections
+Input: 
+    * Hash with the following info:
+        - function: string with the function used in the request
+        - message: Output message from theserver
+        - query: hash containing the query from the request
+        - status: result from the execution on the server (ok/error)
+        - data: hash. Must have the following attributes:
+            - id: string cannot be null
+            - model: string cannot be null
+            - name: string
+            - shortname: string
+            - register: string
+            - filename: string
+            - attributes: hash
+            - effective_attributes: hash
+Output:
+    No output
+*******************************************************************************/
+function show_object_detail(d) {
+    if(d.status == "error") {
+        alert(d.message);
+        return;
+    }
+    var data = d.data;
+    var o = new string_class[data.model](data);
+    $(".object_list").html("");
+    append_breadcrumb($(".breadcrumb"), o.get_guiname(), "show", {model: o.model, id: o.id, o: o});
+    o.html_override($(".object_override"));
+    o.html_inherited($(".object_inherited"));
+    o.html_effective($(".object_effective"));
+    o.html_actions($(".dropdown-menu.action"));    
+}
+
+/*******************************************************************************
+    Function Name: sort_object
+    Description: callback function to sort an array of NagiosObjects
+    Input:
+        a, b: - NagiosObject object
+
+    Output:    -1 if description of a is < description of b
+                0 if description of a is = to description of b
+                1 if description of a is > description of b
+*******************************************************************************/
+function sort_object(a, b) {
+    a_name = a.get_description();
+    b_name = b.get_description();
+    return a_name > b_name ? 1 : a_name < b_name ? -1 : 0;
+}
+
+/*******************************************************************************
+Function Name: get_current_object
+Description:   Extacts the object stored in DOM with class .nagios-item.active
+               at attribute "typedata". This is the current object presented
+               in the page.
+Input:  Nothing
+
+Output: NagiosObject with data
+*******************************************************************************/
+function get_current_object() {
+    var typedata = $(".nagios-item.active").data("typedata");
+    return typedata.o;
+}
+
+/*******************************************************************************
+Function Name: get_object
+Description:   Gets a basic object from the cache in objects hash. This object 
+               doesn't contain all the information, just name and id.
+Input:  
+    * model: if null, gets the info from .nagios-item.active typedata.
+    * id: if null, gets the info from .nagios-item.active typedata.
+
+Output: NagiosObject with minimal data or null if object doesn't exist.
+*******************************************************************************/
+function get_object(model, id) {
+    var typedata = $(".nagios-item.active").data("typedata");
+    var o_id = id;
+    if(model == null)
+        model = typedata.model;
+    if(o_id == null) {
+        o_id = typedata.id;
+    }
+
+    if((model in objects) && (id in objects[model]))
+        return objects[model][id];
+
+    return null;
+
+}
+
+function reset_object_view() {
+    $(".object_list").html("");
+    $(".object_override").html("");
+    $(".object_inherited").html("");
+    $(".object_effective").html("");
+    $(".object_info").html("");
+    $(".object_details").attr("data-model", "");
+    $(".object_details").attr("data-id", "");
+    $(".dropdown-menu.action").html("");
+}
+
+function add_attribute_row() {
+    attribute = this.innerHTML;
+    o = get_current_object();
+    o.append_detail_row(attribute, $(".object_override"));
+    o.attribute[attribute] = "";
+    $("#overr_" + attribute).attr("checked", 1);
+    o.modified_attributes.push(attribute);
+}
+
+
+function finish_save() {
+    var o = get_current_object();
+    var model = o.model;
+    $(".breadcrumb-item.nagios-item").remove();
+    load_object(model, "list", {}, show_object_list);
+}
+
+function save_object() {
+    $('#reload-config').addClass("disabled");
+    $('#genericModal').modal('hide');
+    var o = get_current_object();
+    if(!o.is_dirty()) {
+        return;
+    }
+    var query = { id: o.id };
+    for(var a in o.modified_attributes) {
+        var attribute = o.modified_attributes[a];
+        query[attribute] = o.attribute[attribute];
+    }
+    delete objects[o.model][o.id];
+    load_object(o.model, "update", query, finish_save);
+}
+
+function discard_object() {
+    $('#genericModal').modal('hide');
+    var o = get_current_object();
+    finish_save();
+}
+
+function delete_object() {
+    $('#genericModal').modal('hide');
+    $('#reload-config').addClass("disabled");
+    var o = get_current_object();
+    load_object(o.model, "delete", {id: o.id}, finish_save);
+}
+
+function copy_object() {
+    $('#reload-config').addClass("disabled");
+    $('#genericModal').modal('hide');
+    var o = get_current_object();
+    if(o.is_dirty()) {
+        alert("Cannot copy a modified object.");
+        return;
+    }
+    var query = { };
+    query['id'] = o.id;
+    query[o.model.toLowerCase() + "_name"] = $('#object-name').val();
+    load_object(o.model, "copy", query, finish_save);
+    return;
+}
+
+function show_family(event) {
+    var selected_object = $(event.target);
+    var model = selected_object.data("model");
+    var id = selected_object.data("id");
+    $(".nav-link.active").removeClass("active");
+    $(".nav-link[data-model='" + selected_object.data("model") + "']")
+        .addClass("active");
+    load_object(model, "show", {id: id}, show_object_detail);
+}
+
+function change_override() {
+    attribute = this.id.substr(6);
+    var o = get_current_object();
+    if(this.checked == false) {
+        $("#val_" + attribute).val(o.get(attribute, true)).attr("disabled", 1);
+        o.attribute[attribute] = null;
+        o.modified_attributes.push(attribute);        
+    } else {
+        o.modified_attributes.push(attribute);
+        o.attribute[attribute] = $("#val_" + attribute).val();
+        $("#val_" + attribute).removeAttr("disabled");        
+    }
+}
+
+function change_attribute() {
+    var attribute = this.id.substr(4);
+    var o = get_current_object();
+    o.modified_attributes.push(attribute);
+    o.attribute[attribute] = this.value;
+}
+
+function append_breadcrumb(bc, text, type, typedata) {
+    var lastactive = bc.children(".nagios-item.active");
+    var itemtext = lastactive.text();
+    var last_type = lastactive.data("type");
+    var last_typedata = lastactive.data("typedata");
+    
+    if(lastactive.length > 0)
+        lastactive.removeClass("active")
+                .html($("<a>")
+                    .attr("href", "#")
+                    .data("type", last_type)
+                    .data("typedata", last_typedata)
+                    .click(click_breadcrumb)
+                    .html(itemtext));
+    bc.append($("<li>")
+            .data("type", type)
+            .data("typedata", typedata)
+            .addClass("breadcrumb-item nagios-item active")
+            .html(text));
+}
+
+function click_list_row(event) {
+    var selected_row = $(event.target);
+    var model = selected_row.data("model");
+    var id = selected_row.data("id");
+    load_object(model, "show", {id: id}, show_object_detail);
+}
+
+function click_navtab(event) {
+    selected_navlink = $(event.target);
+    var model = selected_navlink.data("model");
+    $(".collapse.object-list").collapse("hide");
+    $(".breadcrumb-item.nagios-item").remove();
+    $("#objectDropdownMenuLink").html("Object");
+    load_object(model, "list", { }, show_object_list);
+}
+
+function click_breadcrumb(event) {
+    var self = $(event.target);
+    self.parent().nextUntil().remove();
+    var type = self.data("type") ;
+    var typedata = self.data("typedata");
+    self.parent().remove();
+    if(type == "list") {
+        load_object(typedata.model, "list", { }, show_object_list);
+    } else if(type == "show") {
+        load_object(typedata.model, "show",{ id: typedata.id }, show_object_detail);
+    }
+}
+
+function addtab(menu, name, active) {
+    menu.append($("<a>")
+        .addClass("dropdown-item")
+        .click(click_navtab)
+        .attr("href", "#")
+        .data("model", name)
+        .html(name));
+}
+
+function check_config_result(data) {
+    reset_object_view();
+    var status;
+    if(data.status == "ok") {
+        status = "Configuration is correct! You can now reload the configuration."
+        $("#reload-config").removeClass("disabled");
+    } else {
+        status = "Error checking the configuration."
+    }
+    $(".breadcrumb-item.nagios-item").remove();
+    $(".object_list").html($("<div>")
+        .addClass("col")
+        .css("white-space", "pre-line")
+        .text(data.message));
+}
+
+function reload_config_result(data) {
+    $("#reload-config").addClass("disabled")
+    var message;
+    var status;
+    if(data.status == "ok") {
+        message = "Configuration applied.";
+        status = "Reloaded";
+    } else {
+        message = "There was an error applying the configuration.";
+        status = "Error";
+    }
+    $(".breadcrumb-item.nagios-item").remove();
+    $(".object_list").html($("<div>")
+        .addClass("col")
+        .text(message));
+
+}
+
+function a_modal(func, text) {
+    return $("<a>")
+        .addClass("dropdown-item")
+        .attr("data-toggle", "modal")
+        .attr("data-target", "#genericModal")
+        .attr("data-function", func)
+        .attr("href", "#")
+        .html(text)
+}
+
+function reload_config(event) {
+    var self = $(event.target);
+    if(self.hasClass("disabled"))
+        return;
+    load_object("", "reload", {}, reload_config_result);
+}
+
+function check_config(event) {
+    load_object("", "check", {}, check_config_result);
+}
+
+$(document).ready(function() {
+    tabs.forEach(function(item, index) {
+        addtab($(".dropdown-menu.model"), item, false);
+        load_object(item, "list", {}, collect_object_list);
+    });
+    $('#reload-config')
+        .click(reload_config);
+    $('#check-config')
+        .click(check_config);
+
+    $('#genericModal').on('show.bs.modal', function (event) {
+        var button = $(event.relatedTarget);
+        var func = button.data('function');
+        var modal = $(this);
+        o = get_current_object();
+        if(func == "copy") {
+            modal.find('.modal-title').text('Copy');
+            modal.find('.modal-body').html($("<form>")
+                .append($("<div>").addClass("form-group")
+                    .append($("<label>").addClass("col-form-label")
+                        .attr("for", "object-name")
+                        .html("New name:"))
+                    .append($("<input>").addClass("form-control")
+                        .attr("id", "object-name")
+                        .attr("type", "text")))
+                );
+            modal.find('.modal-body input').val(o.shortname);
+            modal.find('.modal-footer .btn-primary')
+                .off()
+                .click(copy_object);
+        } else if(func == "delete") {
+            modal.find('.modal-title').text('Delete Object');
+            modal.find('.modal-body').html("Are you sure you want to delete this object?");
+            modal.find('.modal-footer .btn-primary')
+                .off()
+                .html("Delete")
+                .click(delete_object);
+        } else if(func == "save") {
+            modal.find('.modal-title').text('Save Object');
+            modal.find('.modal-body').html("Are you sure you want to save this object?");
+            modal.find('.modal-footer .btn-primary')
+                .off()
+                .html("Save")
+                .click(save_object);
+        } else if(func == "discard") {
+            modal.find('.modal-title').text('Discard changes');
+            modal.find('.modal-body').html("Are you sure you want to discard changes?");
+            modal.find('.modal-footer .btn-primary')
+                .off()
+                .html("Discard")
+                .click(discard_object);
+        }
+    })
+});
+</script>
+</head>
+<body>
+<div class="container">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <a class="navbar-brand" href="#">Config</a>
+        <div class="collapse navbar-collapse object-list" id="navbarSupportedContent">
+            <ul class="navbar-nav mr-auto mt-2 mt-lg-0">
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="systemDropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    System
+                    </a>
+                    <div class="dropdown-menu system" aria-labelledby="systemDropdownMenuLink">
+                        <a class="dropdown-item" id="check-config" href="#">Check Configuration</a>
+                        <a class="dropdown-item disabled" id="reload-config" href="#">Reload Configuration</a>
+                    </div>
+              </li>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="modelDropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    Model
+                    </a>
+                    <div class="dropdown-menu model" aria-labelledby="modelDropdownMenuLink"></div>
+                </li>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="actionDropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    Action
+                    </a>
+                    <div class="dropdown-menu action" aria-labelledby="actionDropdownMenuLink"></div>
+                </li>
+            </ul>
+        </div>
+    </nav>
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item active">Home</li>
+        </ol>
+    </nav>
+    <div class="container object_list"></div>
+    <div class="container object_details">
+        <div class="container object_attributes">
+            <div class="container object_override"></div>
+            <div class="container object_inherited"></div>
+            <div class="container object_effective"></div>
+            <div class="container object_info"></div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="genericModal" tabindex="-1" role="dialog" aria-labelledby="confirmCopyModalLabel" aria-hidden="true">
+      <div class="modal-dialog" role="document">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="confirmCopyModalLabel">What is the name of the copy of this object?</h5>
+            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+              <span aria-hidden="true">&times;</span>
+            </button>
+          </div>
+          <div class="modal-body">
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+            <button type="button" class="btn btn-primary" data-func="save">Save changes</button>
+          </div>
+        </div>
+      </div>
+    </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
+</body>
+</html>
