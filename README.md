@@ -10,18 +10,15 @@ Requirements:
 
 Installation instructions:
 ```
-pip install virtualenv
-mkdir -p /var/www/nagios_config/nagios_config
-mkdir -p /var/www/nagios_config/html
-cd /var/www/nagios_config/nagios_config
-virtualenv venv
-source venv/bin/activate
-cd venv
-git clone https://github.com/samanamonitor/pynag.git
-cd pynag
-python setup.py build
-python setup.py install
-cd ..
-git clone https://github.com/samanamonitor/nagios-config.git
-cp nagios-config/
+sudo apt install -y libapache2-mod-wsgi
+pip install flask
+sudo mkdir -p /var/www/nagios_config/nagios_config
+sudo mkdir -p /var/www/nagios_config/html
+sudo cp -R nagios_config/* /var/www/nagios_config/nagios_config/
+sudo cp -R html/* /var/www/nagios_config/html/
+sudo cp nagios_config.wsgi /var/www/nagios_config/
+sudo cp etc/apache2/sites-available/nagios-config.conf /etc/apache2/sites-available/ 
+cd /etc/apache2/sites-enabled/  
+sudo ln -s ../sites-available/nagios-config.conf 
+sudo systemctl restart apache2
 ``` 
