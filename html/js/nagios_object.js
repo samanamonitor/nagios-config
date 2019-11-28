@@ -19,7 +19,10 @@ class NagiosObject {
         if(this.shortname == null) {
             return this.name + "(Template)";
         }
-        return this.shortname;
+        if(this.name == null) {
+            return this.shortname;
+        }
+        return this.shortname + "(" + this.name + ")";
     }
 
     get_description() {
