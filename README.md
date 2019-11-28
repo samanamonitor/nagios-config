@@ -6,7 +6,7 @@ and use all the objects defined in pynag.
 
 Requirements:
 - pynag branch from samanamonitor
-- python flask
+- apache2
 
 Installation instructions:
 ```

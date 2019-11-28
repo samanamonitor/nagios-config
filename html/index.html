@@ -308,7 +308,11 @@ function copy_object() {
     }
     var query = { };
     query['id'] = o.id;
-    query[o.model.toLowerCase() + "_name"] = $('#object-name').val();
+    if(o.model == "Service") {
+        query.name = $('#object-name').val();
+    } else {
+        query[o.model.toLowerCase() + "_name"] = $('#object-name').val();
+    }
     load_object(o.model, "copy", query, finish_save);
     return;
 }

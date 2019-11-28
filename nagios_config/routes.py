@@ -127,11 +127,15 @@ def copy_object(req_model="", elements=None, query={}):
     del query['id']
 
     model_name = req_model.lower()
-    shortname = query.get(model_name + "_name", "shortname")
+    shortname = query.get(model_name + "_name")
     name = query.get("name")
     if shortname is None and name is None:
         raise Exception('A new name/%s_name must be defined' % model_name)
 
+    if name is not None and len(model.objects.filter(name=name)) > 0:
+        raise Exception('Duplicate object exist with name %s' % name)
+    if shortname is not None and len(model.objects.filter(shortname=name)) > 0:
+        raise Exception('Duplicate object exist with shortname %s' % shortname)
 
     o = model.objects.get_by_id(o_id)
     if model_name != 'service':
