@@ -6,4 +6,4 @@ if [ ! -d "${BACKUPDIR}"]; then
     mkdir -p ${BACKUPDIR}
 fi
 find ${BACKUPDIR} -type f -mtime +30 -exec rm -f {} \;
-tar -czvf /var/backup/${DATE}nagios.tgz
+tar -czvf /var/backup/${DATE}nagios.tgz /etc/nagios/objects
